@@ -47,3 +47,9 @@ Options:
   -i, --index           Create the shapefile of tiles index (True or False)
   -k, --keep            Keep temporary files reated by gdal2cesium
 ```
+
+Example usage with tiff sources already in EPSG:4326:
+
+<code>./gdal2cesium.py -o tiles *.tiff</code>
+
+The ouput tiles directory will be saved into the /tiles subfolder
