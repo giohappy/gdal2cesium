@@ -6,7 +6,7 @@ Introduction
 
 A Python command line utility, based on GDAL and inspired by [gdal2tiles](http://www.gdal.org/gdal2tiles.html), to generate terrain heightmap tiles accordig to the native [Cesium format](http://cesiumjs.org/data-and-assets/terrain/formats/heightmap-1.0.html)
 
-Any raster source supported by GDAL can be used. It can process multiple sources, with different size, resolution and covering area. The only requirement is that **sources must have the same data type** (Float32, Int16, etc.). In case you can transform them using [gdal_translate](http://www.gdal.org/gdal_translate.html).
+Any raster source supported by GDAL can be used. It can process multiple sources, with different size, resolution and covering area. The only requirement is that **sources must have the same data type** (Float32, Int16, etc.). You can transform the data type using [gdal_translate](http://www.gdal.org/gdal_translate.html).
 The original data will be merged according to the following rules:
 
  - Lower resolution sources are used to generate lower zoom levels tiles
