@@ -4,20 +4,20 @@ gdal2cesium
 Introduction
 ------------
 
-A Python command line utility, based on GDAL and inspired to [gdal2tiles](http://www.gdal.org/gdal2tiles.html), to generate terrain heightmap tiles accordig to the native [Cesium format](http://cesiumjs.org/data-and-assets/terrain/formats/heightmap-1.0.html)
+A Python command line utility, based on GDAL and inspired by [gdal2tiles](http://www.gdal.org/gdal2tiles.html), to generate terrain heightmap tiles accordig to the native [Cesium format](http://cesiumjs.org/data-and-assets/terrain/formats/heightmap-1.0.html)
 
-Any raster source supported by GDAL can be used. It can process multiple sources, with different size, resolution and covering area. The only requirement is that **sources must have the same data type** (Float32, Int16, etc.). In case you can transform them using [gdal_translate](http://www.gdal.org/gdal_translate.html).
+Any raster source supported by GDAL can be used. It can process multiple sources, with different size, resolution and covering area. The only requirement is that **sources must have the same data type** (Float32, Int16, etc.). You can transform the data type using [gdal_translate](http://www.gdal.org/gdal_translate.html).
 The original data will be merged according to the following rules:
 
  - Lower resolution sources are used to generate lower zoom levels tiles
- - When two sources with different resolution overlaps, the lower one is used for lower zoom levels, the higher one is used for the highest zooms.
+ - When two sources with different resolution overlap, the lower one is used for lower zoom levels, the higher one is used for the highest zooms.
  - A tile for generated only if a source for the area covered by the tile exists and until source resolution is enough (less or equal) to the zoom level resolution.
 
 This rules generate an optimal tiles coverage: tiles are generated only for those areas and zoom levels where a source meeting the required resolution is available. For each tile the data with the best resolution is choosen between the available sources.
 
-Sources with different CRSs can be used but it's preferable and recomended to use data previously transformed to EPSG:4326 (WGS84). This will make the processing much more faster.
+Sources with different CRSs can be used but it's preferable and recommended to use data previously transformed to EPSG:4326 (WGS84). This will make the processing a lot faster.
 
-**NODATA** values inside the raster sources should be set to **0**.
+**NODATA** values inside the raster sources must be set to **0**.
 An example of pre processing is:
 
 <code>gdalwarp -s_srs epsg:3003 -t_srs epsg:4326 -srcnodata 9999 -dstnodata 0 source.tiff dest.tiff</code>
