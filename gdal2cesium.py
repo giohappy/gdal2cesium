@@ -225,6 +225,7 @@ class GDAL2Cesium(object):
             exit(1)
         
         self.stopped = False
+        self.multi_suffix = ''
         self.input = None
         self.default_base_output = 'tiles'
         self.min_tile_tz = None
@@ -278,11 +279,10 @@ class GDAL2Cesium(object):
         if self.options.output:
             self.output = self.options.output
         else:
-            multi_suffix = ''
             if len(self.inputs)>0:
-                multi_suffix = '_multi'
-            self.output = os.path.join(self.default_base_output,os.path.basename( self.inputs[0] ).split('.')[0]+multi_suffix)
-            self.options.title = os.path.basename( self.inputs[0]+multi_suffix )
+                self.multi_suffix = '_multi'
+            self.output = os.path.join(self.default_base_output,os.path.basename( self.inputs[0] ).split('.')[0]+self.multi_suffix)
+            self.options.title = os.path.basename( self.inputs[0]+self.multi_suffix )
 
         # Supported options
         self.resampling = None
@@ -322,7 +322,7 @@ class GDAL2Cesium(object):
         # Output the results
         if self.options.verbose:
             print("Options:", self.options)
-            print("Input:", self.inputs[0]+multi_suffix)
+            print("Input:", self.inputs[0]+self.multi_suffix)
             print("Output:", self.output)
             print("Cache: %s MB" % (gdal.GetCacheMax() / 1024 / 1024))
             print('')
