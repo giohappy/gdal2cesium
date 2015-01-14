@@ -567,9 +567,6 @@ gdal2tiles temp.vrt""" % _input )
             if tz == self.tmaxz:
                 self.vrts[vrt_file][1] = tz
         
-        # Generate parent tiles
-        self.generate_fake_parent_tiles()
-        
         self.ti_cum = 0
         if self.options.createtileindexshp and self.tilelayer is None:
             driver = ogr.GetDriverByName('Esri Shapefile')
@@ -583,6 +580,9 @@ gdal2tiles temp.vrt""" % _input )
             self.tilelayer.CreateField(ogr.FieldDefn('zoom', ogr.OFTInteger))
             self.tilelayer.CreateField(ogr.FieldDefn('tile', ogr.OFTString))
             self.tilelayer.CreateField(ogr.FieldDefn('children', ogr.OFTInteger))
+            
+        # Generate parent tiles
+        self.generate_fake_parent_tiles()
         
         # For each vrt (i.e. zoom range) generate the tiles
         self.steps = len(self.vrts)
@@ -656,43 +656,61 @@ gdal2tiles temp.vrt""" % _input )
         return NB_FLAGS
         
     def generate_fake_parent_tiles(self):
-        tminx, tminy, tmaxx, tmaxy = self.tminmax[self.tminz]
         tx = None
         for tz in range(self.tminz-1,-1,-1):
-            N = S = E = W = False
-            tx = tminx/2
-            ty = tminy/2
-            if abs(tminx-(tx*2)) == 0:
-                W = True
-            else:
-                E = True
-            if abs(tminy-(ty*2)) == 0:
-                S = True
-            else:
-                N = True
-            
-            NB_FLAGS = self.make_child_flags(N,S,E,W)
-            if self.options.verbose:
-                print "Fake tile %s,%s,%s" % (tz,tx,ty)
-            self.write_fake_tile(tz,tx,ty,NB_FLAGS)
-            tminx = tx
-            tminy = ty
+            tminx, tminy, tmaxx, tmaxy = self.tminmax[tz]
+            tminx_c, tminy_c, tmaxx_c, tmaxy_c = self.tminmax[tz+1]
+            for ty in range(tmaxy, tminy-1, -1):
+                for tx in range(tminx, tmaxx+1):
+                    tminx_cpot = tx * 2
+                    tmaxx_cpot = tminx_cpot + 1
+                    tminy_cpot = ty * 2
+                    tmaxy_cpot = tminy_cpot + 1
+                    
+                    N = S = E = W = False
+                    if tminx_cpot >= tminx_c:
+                        W = True
+                    if tmaxx_cpot <= tmaxx_c:
+                        E = True
+                    if tminy_cpot >= tminy_c:
+                        S = True              
+                    if tmaxy_cpot <= tmaxy_c:
+                        N = True
+                    
+                    NB_FLAGS = self.make_child_flags(N,S,E,W)
+                    if self.options.verbose:
+                        print "Fake tile %s,%s,%s" % (tz,tx,ty)
+                    self.write_fake_tile(tz,tx,ty,NB_FLAGS)
    
         # Write missing zero level tile with no children, tx 0 in case the zero level parent tileX is 1, 1 otherwise
         if tx:
             tx = 1-tx
         self.write_fake_tile(0,tx,0,0x00)
             
-    def write_fake_tile(self,tz,tx,ty,NP_FLAGS):
+    def write_fake_tile(self,tz,tx,ty,NB_FLAGS):
         tilefilename = os.path.join(self.output, str(tz), str(tx), "%s.%s" % (ty, self.tileext))
         # Create directories for the tile
         if not os.path.exists(os.path.dirname(tilefilename)):
             os.makedirs(os.path.dirname(tilefilename))
+            
+        if self.options.createtileindexshp and self.tilelayer is not None:
+            self.ti_cum += 1
+            tilelayerdefn = self.tilelayer.GetLayerDefn()
+            feat = ogr.Feature(tilelayerdefn)
+            feat.SetField('id', self.ti_cum)
+            feat.SetField('zoom', tz)
+            feat.SetField('tile', "%s_%s_%s" % (tz, tx, ty))
+            feat.SetField('children', NB_FLAGS)
+            b = self.geodetic.TileBounds(tx, ty, tz)
+            geom = ogr.CreateGeometryFromWkb(makeline(b[0], b[3], b[2], b[1]).wkb)
+            feat.SetGeometry(geom)
+            self.tilelayer.CreateFeature(feat)
+            feat = geom = None
         
         # convert to integer representation of heightmap accordind to Cesium format and append children flags byte
         tilearrayint = (numpy.zeros(4225,numpy.dtype('int16')) + 1000) * 5
         tilearrayint.tofile(tilefilename)
-        child_water_bytes = struct.pack('<BB',NP_FLAGS,0x00)
+        child_water_bytes = struct.pack('<BB',NB_FLAGS,0x00)
         with open(tilefilename,'ab') as outfile:
             outfile.write(child_water_bytes)
     
