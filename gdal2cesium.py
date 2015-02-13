@@ -557,8 +557,8 @@ gdal2tiles temp.vrt""" % _input )
         for tz in range(self.tminz,self.tmaxz+1):
             res = self.zoom_resolutions[tz]
             if res != tmp_res:
-                if tz < self.tmaxz and vrt_file:
-                    self.vrts[vrt_file][1] = tz-1
+		if i>0:
+			self.vrts[vrt_file][1] = tz-1
                 tmp_res = res
                 self.make_vrt(res,i)
                 vrt_file = "cesium_%s.vrt" % i
