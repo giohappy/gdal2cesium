@@ -37,7 +37,6 @@
 
 import os,sys,math,glob,struct
 import subprocess
-import pdb
 
 try:
     from osgeo import gdal
@@ -186,11 +185,11 @@ class GDAL2Cesium(object):
                 if (self.user_tminz is not None and tz < self.user_tminz) or (self.user_tmaxz is not None and tz > self.user_tmaxz):
                     continue
                 if self.zoom_resolutions.get(zoom) is None:
-                    self.zoom_resolutions[zoom] = input_data[3]
+                    self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
                 else:
-                    # the worst resolution is assigned to the common zoom levels
-                    if self.zoom_resolutions[zoom] < input_data[3]:
-                        self.zoom_resolutions[zoom] = input_data[3]
+                    # the worst resolution is assigned to the common zoom levels (we check only resx, because resy will be consequently correlated)
+                    if self.zoom_resolutions[zoom][0] < input_data[3]:
+                        self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
         
         '''print "MERGED"
         for tz,tminmax_values in enumerate(self.global_tminmax): 
@@ -542,12 +541,12 @@ gdal2tiles temp.vrt""" % _input )
         if self.options.verbose:
             print("Bounds (latlong):", ominx, ominy, omaxx, omaxy)
 
-    def make_vrt(self,res,i):  
+    def make_vrt(self,resx,resy,i):
         inputs = " ".join(self.inputs_files_or_vrt)
         if self.options.verbose:
             print "Building VRT file cesium_%s.vrt" % s
         try:
-            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (res,res,i,inputs), shell=True)
+            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (resx,resy,i,inputs), shell=True)
         except:
             exit(1)
     
@@ -557,12 +556,14 @@ gdal2tiles temp.vrt""" % _input )
         tmp_res = -1
         vrt_file = None
         for tz in range(self.tminz,self.tmaxz+1):
-            res = self.zoom_resolutions[tz]
+            res = self.zoom_resolutions[tz][0]  # I check only with resx, because resy will be positively correlated
             if res != tmp_res:
 		if i>0:
 			self.vrts[vrt_file][1] = tz-1
                 tmp_res = res
-                self.make_vrt(res,i)
+                resx = self.zoom_resolutions[tz][0]
+                resy = self.zoom_resolutions[tz][1]
+                self.make_vrt(resx,resy,i)
                 vrt_file = "cesium_%s.vrt" % i
                 self.vrts[vrt_file] = [tz,None]
                 i += 1
@@ -818,8 +819,6 @@ gdal2tiles temp.vrt""" % _input )
 
         # Tile bounds in raster coordinates for ReadRaster query with extrapixels for Cesium tiles overlap
         querysize = self.querysize + ((self.querysize/self.tilesize) * self.extrapixels)
-        #if tz==6 and tx==67 and (ty==47 or ty==46):
-        #    pdb.set_trace()
         rb, wb = self.geo_query( ds, b_aug[0], b_aug[3], b_aug[2], b_aug[1], querysize=querysize)
 
         rx, ry, rxsize, rysize = rb
@@ -843,11 +842,8 @@ gdal2tiles temp.vrt""" % _input )
             dstile.WriteRaster(wx, wy, wxsize, wysize, data, band_list=list(range(1,self.dataBandsCount+1)))
         else:
             # Big ReadRaster query in memory scaled to the tilesize - all but 'near' algo
-            try:
-                dsquery = self.mem_drv.Create('', querysize, querysize, tilebands, gdal.GDT_Float32)
-                dsquery.WriteRaster(wx, wy, wxsize, wysize, data, band_list=list(range(1,self.dataBandsCount+1)))
-            except:
-                pdb.set_trace()
+            dsquery = self.mem_drv.Create('', querysize, querysize, tilebands, gdal.GDT_Float32)
+            dsquery.WriteRaster(wx, wy, wxsize, wysize, data, band_list=list(range(1,self.dataBandsCount+1)))
             self.scale_query_to_tile(dsquery, dstile)
             del dsquery
         del data
