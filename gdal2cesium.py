@@ -190,7 +190,7 @@ class GDAL2Cesium(object):
                     # the worst resolution is assigned to the common zoom levels (we check only resx, because resy will be consequently correlated)
                     if self.zoom_resolutions[zoom][0] < input_data[3]:
                         self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
-        
+        pdb.set_trace()
         '''print "MERGED"
         for tz,tminmax_values in enumerate(self.global_tminmax): 
             print "  tz: %s, tminmax: %s" % (tz,tminmax_values)
@@ -688,6 +688,9 @@ gdal2tiles temp.vrt""" % _input )
         # Write missing zero level tile with no children, tx 0 in case the zero level parent tileX is 1, 1 otherwise
         if tx:
             tx = 1-tx
+        if tx is None:
+            tx = 0
+
         self.write_fake_tile(0,tx,0,0x00)
             
     def write_fake_tile(self,tz,tx,ty,NB_FLAGS):
