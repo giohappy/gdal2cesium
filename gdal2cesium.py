@@ -546,7 +546,7 @@ gdal2tiles temp.vrt""" % _input )
         if self.options.verbose:
             print "Building VRT file cesium_%s.vrt" % s
         try:
-            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (resx,resy,i,inputs), shell=True)
+            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (abs(resx),abs(resy),i,inputs), shell=True)
         except:
             exit(1)
     
