@@ -190,7 +190,6 @@ class GDAL2Cesium(object):
                     # the worst resolution is assigned to the common zoom levels (we check only resx, because resy will be consequently correlated)
                     if self.zoom_resolutions[zoom][0] < input_data[3]:
                         self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
-        pdb.set_trace()
         '''print "MERGED"
         for tz,tminmax_values in enumerate(self.global_tminmax): 
             print "  tz: %s, tminmax: %s" % (tz,tminmax_values)
