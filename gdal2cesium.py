@@ -35,7 +35,7 @@
 #  DEALINGS IN THE SOFTWARE.
 #******************************************************************************
 
-import os,sys,math,glob,struct
+import os,sys,math,glob,struct,shutil
 import subprocess
 
 try:
@@ -131,25 +131,123 @@ class GlobalGeodetic(object):
         b = self.TileBounds(tx, ty, zoom)
         return (b[1],b[0],b[3],b[2])
 
+import fnmatch
+class PostProcessor(object):
+    def __init__(self,outPath = "./",tmpOutPath = "./tmp"):
+        self.rootPath = tmpOutPath
+        self.pattern = '*.terrain'
+        self.processedPath = outPath
+        self.rtype = numpy.dtype('int16')
+    
+    def walk_tiles(self,folder = '.'):
+        for root, _, files in os.walk(self.rootPath):
+            for filename in fnmatch.filter(files, self.pattern):
+                yield( os.path.join(root, filename))
+        
+    def get_tiles(self):
+        terrains = []
+        for terrain in self.walk_tiles():
+            terrains.append(terrain)
+        return terrains
+    
+    
+    def extract_data(self,fin,rb):
+        data = numpy.fromfile(fin,dtype=self.rtype,count=4096)
+        data_mat = data.reshape((64,64))
+        if rb == 'r':
+            data_slice = data_mat[:,0] # left col
+        else:
+            data_slice = data_mat[0] # top row
+        return data_slice
+        
+    def augment_tile(self,fin,data_slice_r,data_slice_b,pixel_br):
+        data_complete = numpy.fromfile(fin,dtype=self.rtype,count=4097)
+        data = data_complete[:4096]
+        maskbytes = data_complete[4096]
+        data_mat = data.reshape((64,64))
+    
+        data_slice_b_br = numpy.c_[[data_slice_b],[pixel_br]] # add bottom right pixel to bottom row as new col
+        data_mat_r = numpy.c_[data_mat,data_slice_r] # add right col to data
+        data_mat_brpr = numpy.r_[data_mat_r,data_slice_b_br] # add bottom row to data
+        
+        return data_mat_brpr,maskbytes
+    
+    def write_tile(self,tilename,new_tile,maskbytes):
+        tilepath = os.path.join(self.processedPath,tilename)
+        if not os.path.exists(os.path.dirname(tilepath)):
+            os.makedirs(os.path.dirname(tilepath))
+         
+         
+        tilearrayint = new_tile.astype(numpy.int16)
+        data = tilearrayint.flatten()
+        data_with_mask = numpy.append(data,maskbytes)
+        data_with_mask.tofile(tilepath)
+        
+    def run(self):
+        for terrain in self.get_tiles():
+            pathparts = terrain.split("/")
+            idx = len(pathparts)
+            root = os.path.join(*pathparts[:idx-3])
+            y = int(pathparts[idx-1].split(".")[0])
+            x = int(pathparts[idx-2])
+            z = int(pathparts[idx-3])
+            right_tile = os.path.join(root,str(z),str(x+1),"%s.terrain" % y)
+            bottom_tile = os.path.join(root,str(z),str(x),"%s.terrain" % str(y-1))
+            bottom_right_tile = os.path.join(root,str(z),str(x+1),"%s.terrain" % str(y-1))
+            
+            if os.path.exists(right_tile):
+                with open(right_tile) as right_tile_f:
+                    data_slice_r = self.extract_data(right_tile_f,'r')
+            else:
+                data_slice_r = numpy.empty(64)
+                data_slice_r.fill(5000)
+            
+            if os.path.exists(bottom_tile):
+                with open(bottom_tile) as bottom_tile_f:
+                    data_slice_b = self.extract_data(bottom_tile_f,'t')
+            else:
+                data_slice_b = numpy.empty(64)
+                data_slice_b.fill(5000)
+            
+            if os.path.exists(bottom_right_tile):
+                with open(bottom_right_tile) as bottom_right_tile_f:
+                    data = numpy.fromfile(bottom_right_tile_f,dtype=self.rtype,count=1)
+                    pixel_br = data[0]
+            else:
+                pixel_br = 5000
+        
+            with open(terrain) as terrain_f:
+                new_tile,maskbytes = self.augment_tile(terrain_f,data_slice_r,data_slice_b,pixel_br)
+                tilename = os.path.join(*pathparts[idx-3:idx])
+                self.write_tile(tilename,new_tile,maskbytes)
+
 class GDAL2Cesium(object):
     # -------------------------------------------------------------------------    
     def process(self):
-        for input_file in self.inputs:
-            self.input = input_file
-            self.pre_process_input(input_file)
+        for inumpyut_file in self.inumpyuts:
+            self.inumpyut = inumpyut_file
+            self.pre_process_inumpyut(inumpyut_file)
         
-        self.merge_inputs_data()
+        self.merge_inumpyuts_data()
         
         self.make_tiles()
         
-    def merge_inputs_data(self):
+        print """Running post processing"""
+        pp = PostProcessor(self.output,self.tmpoutput)
+        pp.run()
+        print """Post processing terminated"""
+        
+        shutil.rmtree(self.tmpoutput)
+        
+        
+    def merge_inumpyuts_data(self):
         # Merge tminmax. We will use the extent containing all the layers for the lower zooms and only the higher resolution layer for the highest zooms
         global_tminmax = []
-        for _input,input_data in self.inputs_data.iteritems():
-            #print "Input: %s" % _input
-            minz = input_data[0]
-            maxz = input_data[1]
-            tminmax = input_data[2]
+        for _inumpyut,inumpyut_data in self.inumpyuts_data.iteritems():
+            #print "Inumpyut: %s" % _inumpyut
+            minz = inumpyut_data[0]
+            maxz = inumpyut_data[1]
+            tminmax = inumpyut_data[2]
             for tz,tminmax_values in enumerate(tminmax):
                 if (self.user_tminz is not None and tz < self.user_tminz) or (self.user_tmaxz is not None and tz > self.user_tmaxz):
                     continue
@@ -174,9 +272,9 @@ class GDAL2Cesium(object):
         self.tminmax = global_tminmax
         
         # Split zooms in zoom ranges based on resolutions (to build the related vrt files)
-        for _input,input_data in self.inputs_data.iteritems():
-            minz = input_data[0]
-            maxz = input_data[1]
+        for _inumpyut,inumpyut_data in self.inumpyuts_data.iteritems():
+            minz = inumpyut_data[0]
+            maxz = inumpyut_data[1]
             if self.tminz is None or minz < self.tminz:
                 self.tminz = minz
             if self.tmaxz is None or maxz > self.tmaxz:
@@ -185,11 +283,11 @@ class GDAL2Cesium(object):
                 if (self.user_tminz is not None and tz < self.user_tminz) or (self.user_tmaxz is not None and tz > self.user_tmaxz):
                     continue
                 if self.zoom_resolutions.get(zoom) is None:
-                    self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
+                    self.zoom_resolutions[zoom] = (inumpyut_data[3],inumpyut_data[4])
                 else:
                     # the worst resolution is assigned to the common zoom levels (we check only resx, because resy will be consequently correlated)
-                    if self.zoom_resolutions[zoom][0] < input_data[3]:
-                        self.zoom_resolutions[zoom] = (input_data[3],input_data[4])
+                    if self.zoom_resolutions[zoom][0] < inumpyut_data[3]:
+                        self.zoom_resolutions[zoom] = (inumpyut_data[3],inumpyut_data[4])
         '''print "MERGED"
         for tz,tminmax_values in enumerate(self.global_tminmax): 
             print "  tz: %s, tminmax: %s" % (tz,tminmax_values)
@@ -221,16 +319,16 @@ class GDAL2Cesium(object):
         try:
             subprocess.check_output("which gdalbuildvrt",shell=True)
         except:
-            print "gdalbuildvrt is required to run gdal2cesium in multi inputs mode"
+            print "gdalbuildvrt is required to run gdal2cesium in multi inumpyuts mode"
             exit(1)
         
         self.stopped = False
         self.multi_suffix = ''
-        self.input = None
+        self.inumpyut = None
         self.default_base_output = 'tiles'
         self.min_tile_tz = None
-        self.inputs_data = {}
-        self.inputs_files_or_vrt = []
+        self.inumpyuts_data = {}
+        self.inumpyuts_files_or_vrt = []
         self.vrts = {}
         self.tminmax = None
         self.zoom_resolutions = {}
@@ -255,14 +353,14 @@ class GDAL2Cesium(object):
         self.querysize = 4 * self.tilesize
         
         # pixel overlap between tiles according to Ceiusm heightmap format
-        self.extrapixels = 1 
+        self.extrapixels = 0 
 
         # RUN THE ARGUMENT PARSER:
         self.optparse_init()
         self.options, self.args = self.parser.parse_args(args=arguments)
         self.options.srcnodata = None
         if not self.args:
-            self.error("No input file specified")
+            self.error("No inumpyut file specified")
 
         # POSTPROCESSING OF PARSED ARGUMENTS:
         # Workaround for old versions of GDAL
@@ -273,16 +371,17 @@ class GDAL2Cesium(object):
             self.error("This version of GDAL is not supported. Please upgrade to 1.6+.")
             #,"You can try run crippled version of gdal2tiles with parameters: -v -r 'near'")
         
-        self.inputs = [i for i in self.args]
+        self.inumpyuts = [i for i in self.args]
 
         # Default values for not given options
         if self.options.output:
             self.output = self.options.output
         else:
-            if len(self.inputs)>0:
+            if len(self.inumpyuts)>0:
                 self.multi_suffix = '_multi'
-            self.output = os.path.join(self.default_base_output,os.path.basename( self.inputs[0] ).split('.')[0]+self.multi_suffix)
-            self.options.title = os.path.basename( self.inputs[0]+self.multi_suffix )
+            self.output = os.path.join(self.default_base_output,os.path.basename( self.inumpyuts[0] ).split('.')[0]+self.multi_suffix)
+            self.options.title = os.path.basename( self.inumpyuts[0]+self.multi_suffix )
+        self.tmpoutput = os.path.join(self.output,'tmp')
 
         # Supported options
         self.resampling = None
@@ -322,20 +421,20 @@ class GDAL2Cesium(object):
         # Output the results
         if self.options.verbose:
             print("Options:", self.options)
-            print("Input:", self.inputs[0]+self.multi_suffix)
+            print("Inumpyut:", self.inumpyuts[0]+self.multi_suffix)
             print("Output:", self.output)
             print("Cache: %s MB" % (gdal.GetCacheMax() / 1024 / 1024))
             print('')
 
     # -------------------------------------------------------------------------
     def optparse_init(self):
-        """Prepare the option parser for input (argv)"""
+        """Prepare the option parser for inumpyut (argv)"""
         from optparse import OptionParser, OptionGroup
-        usage = "Usage: %prog [options] input_file(s)"
+        usage = "Usage: %prog [options] inumpyut_file(s)"
         p = OptionParser(usage, version="%prog ")
         
         p.add_option("-s", "--s_srs", dest="s_srs",
-                          help="Define input raster CRS (eg EPSG:3003)")
+                          help="Define inumpyut raster CRS (eg EPSG:3003)")
         p.add_option('-z', '--zoom', dest="zoom",
                           help="Zoom levels to render (format:'2-5' or '10').")
         p.add_option("-r", "--resampling", dest="resampling", type='choice', choices=resampling_list,
@@ -356,31 +455,31 @@ class GDAL2Cesium(object):
         self.parser = p
                 
     # -------------------------------------------------------------------------
-    def pre_process_input(self,_input):
-        """Initialization of the input raster, reprojection if necessary"""
-        print "Processing: %s" % _input
+    def pre_process_inumpyut(self,_inumpyut):
+        """Initialization of the inumpyut raster, reprojection if necessary"""
+        print "Processing: %s" % _inumpyut
         
-        input_or_vrt = _input
+        inumpyut_or_vrt = _inumpyut
         
         if not self.mem_drv:
             raise Exception("The 'MEM' driver was not found, is it available in this GDAL build?")
 
-        # Open the input file
-        if self.input:
-            in_ds = gdal.Open(_input, gdal.GA_ReadOnly)
+        # Open the inumpyut file
+        if self.inumpyut:
+            in_ds = gdal.Open(_inumpyut, gdal.GA_ReadOnly)
         else:
-            raise Exception("No input file was specified")
+            raise Exception("No inumpyut file was specified")
 
         if self.options.verbose:
-            print("Input file:", "( %sP x %sL - %s bands)" % (self.in_ds.RasterXSize, self.in_ds.RasterYSize, self.in_ds.RasterCount))
+            print("Inumpyut file:", "( %sP x %sL - %s bands)" % (self.in_ds.RasterXSize, self.in_ds.RasterYSize, self.in_ds.RasterCount))
 
         if not in_ds:
             # Note: GDAL prints the ERROR message too
-            self.error("It is not possible to open the input file '%s'." % _input )
+            self.error("It is not possible to open the inumpyut file '%s'." % _inumpyut )
 
-        # Read metadata from the input file
+        # Read metadata from the inumpyut file
         if in_ds.RasterCount == 0:
-            self.error( "Input file '%s' has no raster band" % _input )
+            self.error( "Inumpyut file '%s' has no raster band" % _inumpyut )
 
         if in_ds.GetRasterBand(1).GetRasterColorTable():
             # TODO: Process directly paletted dataset by generating VRT in memory
@@ -388,7 +487,7 @@ class GDAL2Cesium(object):
             """From paletted file you can create RGBA file (temp.vrt) by:
 gdal_translate -of vrt -expand rgba %s temp.vrt
 then run:
-gdal2tiles temp.vrt""" % _input )
+gdal2tiles temp.vrt""" % _inumpyut )
 
         # Get NODATA value
         in_nodata = []
@@ -409,17 +508,17 @@ gdal2tiles temp.vrt""" % _input )
             print("NODATA: %s" % in_nodata)
 
         #
-        # Here we should have RGBA input dataset opened in in_ds
+        # Here we should have RGBA inumpyut dataset opened in in_ds
         #
         if self.options.verbose:
             print("Preprocessed file:", "( %sP x %sL - %s bands)" % (in_ds.RasterXSize, in_ds.RasterYSize, in_ds.RasterCount))
 
-        # Spatial Reference System of the input raster
+        # Spatial Reference System of the inumpyut raster
         self.in_srs = None
 
         if self.options.s_srs:
             self.in_srs = osr.SpatialReference()
-            self.in_srs.SetFromUserInput(self.options.s_srs)
+            self.in_srs.SetFromUserInumpyut(self.options.s_srs)
             self.in_srs_wkt = self.in_srs.ExportToWkt()
         else:
             self.in_srs_wkt = in_ds.GetProjection()
@@ -445,13 +544,13 @@ gdal2tiles temp.vrt""" % _input )
         res = in_ds_srs.ImportFromWkt(in_ds.GetProjection())
         
         if res != 0 and in_srs_code is None:
-                print "ERROR! The input file %s has no SRS associated and no SRS has been defined in input (-s parameter)" % _input
+                print "ERROR! The inumpyut file %s has no SRS associated and no SRS has been defined in inumpyut (-s parameter)" % _inumpyut
                 exit(1)
  
         if self.in_srs:
             if in_ds_srs.ExportToProj4() != self.out_srs.ExportToProj4():
                 if (self.in_srs.ExportToProj4() != self.out_srs.ExportToProj4()) or (in_ds.GetGCPCount() != 0):
-                    print "WARNING! Input file %s has a SR different from EPSG:4326 (WGS84). This can make the processing significantly slow." % _input
+                    print "WARNING! Inumpyut file %s has a SR different from EPSG:4326 (WGS84). This can make the processing significantly slow." % _inumpyut
                     # Generation of VRT dataset in tile projection, default 'nearest neighbour' warping
                     out_ds = gdal.AutoCreateWarpedVRT( in_ds, self.in_srs_wkt, self.out_srs.ExportToWkt() )
 
@@ -459,13 +558,13 @@ gdal2tiles temp.vrt""" % _input )
 
                     if self.options.verbose:
                         print("Warping of the raster by AutoCreateWarpedVRT (result saved into 'tiles.vrt')")
-                    out_ds.GetDriver().CreateCopy("%s.vrt" % _input, out_ds)
-                    input_or_vrt = "%s.vrt" % _input
+                    out_ds.GetDriver().CreateCopy("%s.vrt" % _inumpyut, out_ds)
+                    inumpyut_or_vrt = "%s.vrt" % _inumpyut
 
                     # Note: self.in_srs and self.in_srs_wkt contain still the non-warped reference system!!!
 
         else:
-            self.error("Input file has unknown SRS.", "Use --s_srs ESPG:xyz (or similar) to provide source reference system." )
+            self.error("Inumpyut file has unknown SRS.", "Use --s_srs ESPG:xyz (or similar) to provide source reference system." )
 
         if out_ds and self.options.verbose:
             print("Projected file:", "tiles.vrt", "( %sP x %sL - %s bands)" % (out_ds.RasterXSize, out_ds.RasterYSize, out_ds.RasterCount))
@@ -533,19 +632,19 @@ gdal2tiles temp.vrt""" % _input )
         if self.options.verbose:
             print ('Max Zoom: %s' % tmaxz)
         
-        self.inputs_data[_input] = [tminz,tmaxz,tminmax,out_gt[1],out_gt[5]]
+        self.inumpyuts_data[_inumpyut] = [tminz,tmaxz,tminmax,out_gt[1],out_gt[5]]
         
-        self.inputs_files_or_vrt.append(input_or_vrt)
+        self.inumpyuts_files_or_vrt.append(inumpyut_or_vrt)
 
         if self.options.verbose:
             print("Bounds (latlong):", ominx, ominy, omaxx, omaxy)
 
     def make_vrt(self,resx,resy,i):
-        inputs = " ".join(self.inputs_files_or_vrt)
+        inumpyuts = " ".join(self.inumpyuts_files_or_vrt)
         if self.options.verbose:
             print "Building VRT file cesium_%s.vrt" % s
         try:
-            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (abs(resx),abs(resy),i,inputs), shell=True)
+            res = subprocess.check_output("gdalbuildvrt -srcnodata 0 -resolution user -tr %s %s cesium_%s.vrt %s" % (abs(resx),abs(resy),i,inumpyuts), shell=True)
         except:
             exit(1)
     
@@ -607,25 +706,25 @@ gdal2tiles temp.vrt""" % _input )
         print """Processing finished. Tiles written to "%s".""" % self.output
     
     def process_vrt(self,vrt):
-        self.open_input(vrt)
+        self.open_inumpyut(vrt)
         self.generate_tiles(vrt)
 
         
-    def open_input(self,vrt):
+    def open_inumpyut(self,vrt):
         if vrt:
             self.in_ds = gdal.Open(vrt, gdal.GA_ReadOnly)
         else:
             raise Exception("No vrt file was specified")
             
         if self.options.verbose:
-            print("Input file:", "( %sP x %sL - %s bands)" % (self.in_ds.RasterXSize, self.in_ds.RasterYSize, self.in_ds.RasterCount))
+            print("Inumpyut file:", "( %sP x %sL - %s bands)" % (self.in_ds.RasterXSize, self.in_ds.RasterYSize, self.in_ds.RasterCount))
 
         if not self.in_ds:
             # Note: GDAL prints the ERROR message too
-            self.error("It is not possible to open the input file '%s'." % vrt )
+            self.error("It is not possible to open the inumpyut file '%s'." % vrt )
             
         if self.in_ds.RasterCount == 0:
-            self.error( "Input file '%s' has no raster band" % vrt )
+            self.error( "Inumpyut file '%s' has no raster band" % vrt )
         
         self.out_ds = self.in_ds
         
@@ -693,7 +792,7 @@ gdal2tiles temp.vrt""" % _input )
         self.write_fake_tile(0,tx,0,0x00)
             
     def write_fake_tile(self,tz,tx,ty,NB_FLAGS):
-        tilefilename = os.path.join(self.output, str(tz), str(tx), "%s.%s" % (ty, self.tileext))
+        tilefilename = os.path.join(self.tmpoutput, str(tz), str(tx), "%s.%s" % (ty, self.tileext))
         # Create directories for the tile
         if not os.path.exists(os.path.dirname(tilefilename)):
             os.makedirs(os.path.dirname(tilefilename))
@@ -713,14 +812,14 @@ gdal2tiles temp.vrt""" % _input )
             feat = geom = None
         
         # convert to integer representation of heightmap accordind to Cesium format and append children flags byte
-        tilearrayint = (numpy.zeros(4225,numpy.dtype('int16')) + 1000) * 5
+        tilearrayint = (numpy.zeros(4096,numpy.dtype('int16')) + 1000) * 5
         tilearrayint.tofile(tilefilename)
         child_water_bytes = struct.pack('<BB',NB_FLAGS,0x00)
         with open(tilefilename,'ab') as outfile:
             outfile.write(child_water_bytes)
     
     def generate_tiles(self,vrt):
-        """Generation of the Csium tiles from the input raster"""
+        """Generation of the Csium tiles from the inumpyut raster"""
         print("Generating Tiles (round %s of %s):" % (self.step,self.steps))
 
         # Cesium format neighbor tiles flags
@@ -752,7 +851,7 @@ gdal2tiles temp.vrt""" % _input )
             
             for ty in range(tmaxy, tminy-1, -1):
                 for tx in range(tminx, tmaxx+1):
-                    if self.options.resume and os.path.exists(os.path.join(self.output, str(tz), str(tx), "%s.%s" % (ty, self.tileext))):
+                    if self.options.resume and os.path.exists(os.path.join(self.tmpoutput, str(tz), str(tx), "%s.%s" % (ty, self.tileext))):
                         continue
                     # By Default the children flags are set to 0, which means no childern tiles (Cesium format)
                     NB_FLAGS = 0x00
@@ -764,13 +863,13 @@ gdal2tiles temp.vrt""" % _input )
                         tmaxy_cpot = tminy_cpot + 1
                         
                         N = S = E = W = False
-                        if tminx_cpot >= tminx_c:
+                        if tminx_cpot >= tminx_c and tminx_cpot <= tmaxx_c:
                             W = True
-                        if tmaxx_cpot <= tmaxx_c:
+                        if tmaxx_cpot >= tminx_c and tmaxx_cpot <= tmaxx_c:
                             E = True
-                        if tminy_cpot >= tminy_c:
+                        if tminy_cpot >= tminy_c and tminy_cpot <= tmaxy_c:
                             S = True              
-                        if tmaxy_cpot <= tmaxy_c:
+                        if tmaxy_cpot >= tminy_c and tmaxy_cpot <= tmaxy_c:
                             N = True
                             
                         NB_FLAGS = self.make_child_flags(N,S,E,W)
@@ -783,7 +882,7 @@ gdal2tiles temp.vrt""" % _input )
                     if not self.options.verbose:
                         self.progressbar( ti / float(tcount) )
 
-            
+
     def process_tile(self,tz,tx,ty,ti,NB_FLAGS):
         ds = self.out_ds
         tilebands = self.dataBandsCount
@@ -856,7 +955,7 @@ gdal2tiles temp.vrt""" % _input )
         #return None
     
     def write_tile(self,tilearray,tz,tx,ty,NB_FLAGS,WATER_MASK=0):
-        tilefilename = os.path.join(self.output, str(tz), str(tx), "%s.%s" % (ty, self.tileext))
+        tilefilename = os.path.join(self.tmpoutput, str(tz), str(tx), "%s.%s" % (ty, self.tileext))
         # Create directories for the tile
         if not os.path.exists(os.path.dirname(tilefilename)):
             os.makedirs(os.path.dirname(tilefilename))
