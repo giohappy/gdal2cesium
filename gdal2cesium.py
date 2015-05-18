@@ -150,7 +150,6 @@ class PostProcessor(object):
             terrains.append(terrain)
         return terrains
     
-    
     def extract_data(self,fin,rb):
         data = numpy.fromfile(fin,dtype=self.rtype,count=4096)
         data_mat = data.reshape((64,64))
