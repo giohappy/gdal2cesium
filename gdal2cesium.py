@@ -65,6 +65,15 @@ def makepoly(ulx,uly,lrx,lry):
     
 def makeline(ulx,uly,lrx,lry):
     return LineString([(ulx, uly), (lrx, uly), (lrx, lry), (ulx, lry), (ulx, uly)])
+	
+def splitpath(path):
+    parts=[]
+    (path, tail)=os.path.split( path)
+    while path and tail:
+         parts.append( tail)
+         (path,tail)=os.path.split(path)
+    parts.append( os.path.join(path,tail) )
+    return map( os.path.normpath, parts)[::-1]
 
 class GlobalGeodetic(object):
     def __init__(self, tileSize = 256):
@@ -184,7 +193,7 @@ class PostProcessor(object):
         
     def run(self):
         for terrain in self.get_tiles():
-            pathparts = terrain.split("/")
+            pathparts = splitpath(terrain)
             idx = len(pathparts)
             root = os.path.join(*pathparts[:idx-3])
             y = int(pathparts[idx-1].split(".")[0])
@@ -235,7 +244,6 @@ class GDAL2Cesium(object):
         pp = PostProcessor(self.output,self.tmpoutput)
         pp.run()
         print """Post processing terminated"""
-        
         shutil.rmtree(self.tmpoutput)
         
         
@@ -316,7 +324,7 @@ class GDAL2Cesium(object):
     def __init__(self, arguments ):
         """Constructor function - initialization"""
         try:
-            subprocess.check_output("which gdalbuildvrt",shell=True)
+            subprocess.call(["gdalbuildvrt","--help"])
         except:
             print "gdalbuildvrt is required to run gdal2cesium in multi inumpyuts mode"
             exit(1)
