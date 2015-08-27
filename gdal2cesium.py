@@ -204,27 +204,27 @@ class PostProcessor(object):
             bottom_right_tile = os.path.join(root,str(z),str(x+1),"%s.terrain" % str(y-1))
             
             if os.path.exists(right_tile):
-                with open(right_tile) as right_tile_f:
+                with open(right_tile, 'rb') as right_tile_f:
                     data_slice_r = self.extract_data(right_tile_f,'r')
             else:
                 data_slice_r = numpy.empty(64)
                 data_slice_r.fill(5000)
             
             if os.path.exists(bottom_tile):
-                with open(bottom_tile) as bottom_tile_f:
+                with open(bottom_tile, 'rb') as bottom_tile_f:
                     data_slice_b = self.extract_data(bottom_tile_f,'t')
             else:
                 data_slice_b = numpy.empty(64)
                 data_slice_b.fill(5000)
             
             if os.path.exists(bottom_right_tile):
-                with open(bottom_right_tile) as bottom_right_tile_f:
+                with open(bottom_right_tile, 'rb') as bottom_right_tile_f:
                     data = numpy.fromfile(bottom_right_tile_f,dtype=self.rtype,count=1)
                     pixel_br = data[0]
             else:
                 pixel_br = 5000
         
-            with open(terrain) as terrain_f:
+            with open(terrain, 'rb') as terrain_f:
                 new_tile,maskbytes = self.augment_tile(terrain_f,data_slice_r,data_slice_b,pixel_br)
                 tilename = os.path.join(*pathparts[idx-3:idx])
                 self.write_tile(tilename,new_tile,maskbytes)
