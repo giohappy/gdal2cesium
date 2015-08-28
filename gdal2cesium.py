@@ -41,6 +41,7 @@ import subprocess
 try:
     from osgeo import gdal
     from osgeo import osr
+    from osgeo import gdal_array
 except:
     import gdal
     print('You are using "old gen" bindings. gdal2cesium needs "new gen" bindings.')
@@ -944,6 +945,9 @@ gdal2tiles temp.vrt""" % _inumpyut )
         # Tile dataset in memory
         dstile = self.mem_drv.Create('', tilesize_aug, tilesize_aug, tilebands, gdal.GDT_Float32)
         data = ds.ReadRaster(rx, ry, rxsize, rysize, wxsize, wysize, band_list=list(range(1,self.dataBandsCount+1)))
+        datatype = gdal_array.GDALTypeCodeToNumericTypeCode(ds.GetRasterBand(1).DataType)
+        if datatype != numpy.float32:
+            data = numpy.frombuffer(data, dtype=datatype).astype(numpy.float32)).tostring()
         
         if tilesize_aug == querysize:
             # Use the ReadRaster result directly in tiles ('nearest neighbour' query)
